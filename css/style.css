@@ -1,0 +1,21 @@
+html, body {
+    margin: 0;
+    padding: 0;
+}
+
+#map {
+    height: 100vh;
+    width: 100%;
+}
+
+
+.leaflet-interactive {
+    transition: all 0.2s ease-in-out;
+  }
+
+  .leaflet-interactive:hover {
+    stroke: #ffffff;
+    stroke-width: 2;
+    fill-opacity: 1;
+  }
+
