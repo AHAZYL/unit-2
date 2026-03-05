@@ -1,82 +1,129 @@
-// Declare map variable globally so all functions have access
+// Global variables
 var map;
+var currentAttribute;
+var propSymbols;          // L.geoJson layer
+var geoData;              // stored GeoJSON
+var attributesAll = [];   // list of year attributes
+var globalMinValue = 1;   // global min across ALL years
+var dataStats = {};       // {min,max,mean} for CURRENT year
 
-// Global variables for proportional symbol scaling
-var minValue;
-var currentAttribute; // changes as the user sequences
 
-// Instantiate and configure the map
+
+// Create a popup, we instantiate a new PopupContent object,
+function PopupContent(properties, attribute) {
+  this.city = properties.name;
+  this.attribute = attribute;
+  this.hotDays = properties[attribute];
+
+  // Format the popup
+  this.formatted =
+    "<p><b>City:</b> " + this.city + "</p>" +
+    "<p><b>Hot days in " + this.attribute + ":</b> " + this.hotDays + "</p>";
+}
+
+
+
+// Define createMap() to create the Leaflet map
 function createMap() {
-  // Create the map centered on U.S.
+  // Create map centered over the US
   map = L.map("map", {
     center: [39, -98],
     zoom: 4
   });
 
-  // Add CARTO dark basemap
+  // Add CARTO dark basemap tiles
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     subdomains: "abcd",
     maxZoom: 20,
     attribution: "&copy; OpenStreetMap &copy; CARTO"
   }).addTo(map);
 
-  // Load the data
+  // Load GeoJSON
   getData();
 }
 
 
 
-// Build an array of year attributes (from 2015 to 2021)
+// Scan the first feature's properties and extract only year fields
 function processData(data) {
   var attributes = [];
   var properties = data.features[0].properties;
 
   for (var propName in properties) {
-    if (/^\d{4}$/.test(propName)) {    // keep only 4-digit years
-      attributes.push(propName);
-    }
+
+    if (/^\d{4}$/.test(propName)) attributes.push(propName);
   }
 
-  // Make sure they’re in order
-  attributes.sort(function(a, b) {
+  // Sort years numerically
+  attributes.sort(function (a, b) {
     return Number(a) - Number(b);
   });
 
-  console.log("Attributes:", attributes);
   return attributes;
 }
 
 
 
-// Find the minimum value across all year attributes
-function calculateMinValueAll(data, attributes) {
+// Find the minimum value
+function calcGlobalMinValue(data, attributes) {
   var allValues = [];
 
   for (var city of data.features) {
     for (var i = 0; i < attributes.length; i++) {
-      var yr = attributes[i];
-      var value = Number(city.properties[yr]);
-      if (!Number.isNaN(value)) {
-        allValues.push(value);
-      }
+      var v = Number(city.properties[attributes[i]]);
+      if (!Number.isNaN(v)) allValues.push(v);
     }
   }
 
-  return Math.min(...allValues);
+  // Avoid invalid value
+  var m = Math.min(...allValues);
+  return (m <= 0 || !isFinite(m)) ? 1 : m;
 }
 
 
-// Converts attribute value to symbol radius
+
+// Calculates min, max, mean for one selected year
+function calcStatsForAttribute(data, attribute) {
+  var values = [];
+
+  for (var city of data.features) {
+    var v = Number(city.properties[attribute]);
+    if (!Number.isNaN(v)) values.push(v);
+  }
+
+  var min = Math.min(...values);
+  var max = Math.max(...values);
+  var sum = values.reduce(function (a, b) { return a + b; }, 0);
+  var mean = sum / values.length;
+
+  return { min: min, max: max, mean: mean };
+}
+
+
+
+// Convert an attribute value into a circle radius
 function calcPropRadius(attValue) {
-  var minRadius = 3; // adjust to taste
-  var radius = 1.0083 * Math.pow(attValue / minValue, 0.5715) * minRadius;
-  return radius;
+  var minRadius = 3;
+
+  // Avoid bad values
+  if (!isFinite(attValue) || attValue <= 0) return minRadius;
+  if (!globalMinValue || globalMinValue <= 0) return minRadius;
+
+  // Flannery-style scaling
+  return 1.0083 * Math.pow(attValue / globalMinValue, 0.5715) * minRadius;
+}
+
+// Define how legend numbers display
+function formatLegendValue(v) {
+  return Math.round(v);
 }
 
 
-// Convert GeoJSON points into proportional circle markers and popups
+
+
+// Convert each point feature into a styled circleMarker
 function pointToLayer(feature, latlng) {
-  // marker style options
+  // visual style for circles
   var options = {
     fillColor: "#ff6b6b",
     color: "#ffffff",
@@ -86,23 +133,18 @@ function pointToLayer(feature, latlng) {
   };
 
 
-
-  // value for the current attribute
+  // Set radius based on current year value
   var attValue = Number(feature.properties[currentAttribute]);
-
-  // radius based on value
   options.radius = calcPropRadius(attValue);
 
-  // create circle marker
+  // Create circle marker layer
   var layer = L.circleMarker(latlng, options);
 
-  // retrieve popup content
-  var popupContent =
-    "<p><b>City:</b> " + feature.properties.name + "</p>" +
-    "<p><b>Hot days in " + currentAttribute + ":</b> " + feature.properties[currentAttribute] + "</p>";
+  // Build popup content
+  var popupContent = new PopupContent(feature.properties, currentAttribute);
 
-  // offset popup so it doesn't cover symbol
-  layer.bindPopup(popupContent, {
+  // Bind popup and offset it
+  layer.bindPopup(popupContent.formatted, {
     offset: new L.Point(0, -options.radius)
   });
 
@@ -110,44 +152,62 @@ function pointToLayer(feature, latlng) {
 }
 
 
-
-// Create proportional symbols layer
+// Build the GeoJSON layer once and adds it to the map
 function createPropSymbols(data) {
-  var geoLayer = L.geoJson(data, {
+  propSymbols = L.geoJson(data, {
     pointToLayer: pointToLayer
   }).addTo(map);
 
-  map.fitBounds(geoLayer.getBounds());
+  // Zoom map to include all symbols
+  map.fitBounds(propSymbols.getBounds());
 }
 
 
 
 
-// Update symbols and popups when attribute changes
+
+// Update symbols by year
 function updatePropSymbols(attribute) {
   currentAttribute = attribute;
 
-  map.eachLayer(function(layer) {
-    if (layer.feature && layer.feature.properties[attribute] !== undefined) {
-      var props = layer.feature.properties;
+  // Update temporal legend year text
+  var yearSpan = document.querySelector("#temporal-legend");
+  if (yearSpan) yearSpan.textContent = attribute;
 
-      // update radius
-      var radius = calcPropRadius(Number(props[attribute]));
-      layer.setRadius(radius);
+  // Recompute year-specific stats and redraw legend SVG
+  if (geoData) {
+    dataStats = calcStatsForAttribute(geoData, attribute);
+    updateLegendGraphics();
+  }
 
-      // update popup content
-      var popupContent =
-        "<p><b>City:</b> " + props.name + "</p>" +
-        "<p><b>Hot days in " + attribute + ":</b> " + props[attribute] + "</p>";
+  if (!propSymbols) return;
 
-      layer.bindPopup(popupContent, {
-        offset: new L.Point(0, -radius)
-      });
 
-      // refresh popup if open
-      if (layer.getPopup()) {
-        layer.getPopup().setContent(popupContent);
-      }
+
+  // Update each circle marker
+  propSymbols.eachLayer(function (layer) {
+    var props = layer.feature.properties;
+    if (props[attribute] === undefined) return;
+
+    var value = Number(props[attribute]);
+    if (!isFinite(value)) return;
+
+    // Update radius
+    var radius = calcPropRadius(value);
+    layer.setRadius(radius);
+
+    // Update popup
+    var popupContent = new PopupContent(props, attribute);
+
+    if (layer.getPopup()) {
+      layer.setPopupContent(popupContent.formatted);
+      layer.getPopup().options.offset = new L.Point(0, -radius)
+
+
+      // If popup is open, refresh it so user sees new content immediately
+      if (layer.isPopupOpen()) layer.openPopup();
+    } else {
+      layer.bindPopup(popupContent.formatted, { offset: new L.Point(0, -radius) });
     }
   });
 }
@@ -155,40 +215,66 @@ function updatePropSymbols(attribute) {
 
 
 
-// Create slider, step buttons and listeners
+// Create a custom Leaflet control containing a slider and forward/back buttons
 function createSequenceControls(attributes) {
-  var panel = document.querySelector("#panel");
 
-  // Replace panel content with controls
-  panel.innerHTML = `
-  <input class="range-slider" type="range" min="0" max="${attributes.length - 1}" value="0" step="1">
-  <div class="button-row">
-    <button class="step" id="reverse">&#10094;</button>
-    <button class="step" id="forward">&#10095;</button>
-  </div>
-`;
+  // Define a custom Leaflet control class
+  var SequenceControl = L.Control.extend({
+    options: { position: "bottomleft" },
 
-  // Step buttons
-  document.querySelectorAll(".step").forEach(function(step) {
-    step.addEventListener("click", function() {
-      var index = Number(document.querySelector(".range-slider").value);
+    onAdd: function () {
+      // Create container div that Leaflet will place in the map corner
+      var container = L.DomUtil.create("div", "sequence-control-container");
 
-      if (step.id === "forward") {
-        index++;
-        index = index > attributes.length - 1 ? 0 : index;
+      // Insert slider + buttons HTML into container
+      container.insertAdjacentHTML(
+        "beforeend",
+        '<div class="sequence-ui">' +
+          '<input class="range-slider" type="range" min="0" max="' + (attributes.length - 1) +
+          '" value="0" step="1">' +
+          '<div class="button-row">' +
+            '<button class="step" id="reverse" title="Reverse">&#10094;</button>' +
+            '<button class="step" id="forward" title="Forward">&#10095;</button>' +
+          "</div>" +
+        "</div>"
+      );
+
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+
+      return container;
+    }
+  });
+
+
+  // Add control to the map
+  map.addControl(new SequenceControl());
+
+  // Attach event listeners AFTER the control exists in the DOM
+  var slider = document.querySelector(".sequence-control-container .range-slider");
+
+
+
+  // Forward/back buttons
+  document.querySelectorAll(".sequence-control-container .step").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var index = Number(slider.value);
+
+      if (btn.id === "forward") {
+        index = (index + 1) > (attributes.length - 1) ? 0 : (index + 1);
       } else {
-        index--;
-        index = index < 0 ? attributes.length - 1 : index;
+        index = (index - 1) < 0 ? (attributes.length - 1) : (index - 1);
       }
 
-      document.querySelector(".range-slider").value = index;
+      slider.value = index;
       updatePropSymbols(attributes[index]);
     });
   });
 
 
-  // Slider
-  document.querySelector(".range-slider").addEventListener("input", function() {
+
+  // Slider drag
+  slider.addEventListener("input", function () {
     var index = Number(this.value);
     updatePropSymbols(attributes[index]);
   });
@@ -197,39 +283,153 @@ function createSequenceControls(attributes) {
 
 
 
-// Load GeoJSON data
+
+// Add a Leaflet control and insert it into the DOM
+function createLegend(startAttribute) {
+  var LegendControl = L.Control.extend({
+    options: { position: "bottomright" },
+
+    onAdd: function () {
+      var container = L.DomUtil.create("div", "legend-control-container");
+
+      container.innerHTML =
+        '<div class="legend-title">Hot Days in <span class="year" id="temporal-legend">' +
+        startAttribute +
+        "</span></div>" +
+        '<svg id="attribute-legend"></svg>';
+
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+
+      return container;
+    }
+  });
+
+  map.addControl(new LegendControl());
+
+
+  // Draw AFTER the control is added to the map DOM
+  setTimeout(function () {
+    updateLegendGraphics();
+  }, 0);
+}
+
+
+
+// Redraw the SVG each time the year changes
+function updateLegendGraphics() {
+  var svg = document.querySelector("#attribute-legend");
+  if (!svg) return;
+
+  // Current-year stats
+  var vMax = dataStats.max;
+  var vMean = dataStats.mean;
+  var vMin = dataStats.min;
+
+  // SCaled for current year
+  var rMax = calcPropRadius(vMax);
+  var rMean = calcPropRadius(vMean);
+  var rMin = calcPropRadius(vMin);
+
+
+  var pad = 10;
+  var circleCX = 55;
+  var labelX = 205;
+
+  // Vertical placement of number rows
+  var labelTopY = pad + 22;
+  var labelRowGap = 30;
+
+  var bottomY = pad + rMax;
+  bottomY += 50;
+
+  var minBottomY = labelTopY + 2 * labelRowGap + 10;
+  if (bottomY < minBottomY) bottomY = minBottomY;
+
+  // SVG dimensions
+  var svgW = 220;
+  var svgH = bottomY + pad;
+
+  svg.setAttribute("width", svgW);
+  svg.setAttribute("height", svgH);
+  svg.setAttribute("viewBox", "0 0 " + svgW + " " + svgH);
+
+  // Clear and redraw all SVG elements each update
+  svg.innerHTML = "";
+
+
+
+  // Helper: add one circle + one label row
+  function addCircleAndText(key, value, radius, rowIndex) {
+
+    var cy = bottomY - radius;
+    // Circle element
+    svg.insertAdjacentHTML(
+      "beforeend",
+      '<circle class="legend-circle" id="' + key + '" ' +
+        'r="' + radius + '" cx="' + circleCX + '" cy="' + cy + '" ' +
+        'fill="#ff6b6b" fill-opacity="0.5" stroke="#ffffff" stroke-width="1.5" />'
+    );
+
+
+    // Text row y coordinate
+    var textY = labelTopY + rowIndex * labelRowGap;
+
+    // Label element
+    svg.insertAdjacentHTML(
+      "beforeend",
+      '<text class="legend-text" id="' + key + '-text" ' +
+        'x="' + labelX + '" y="' + textY + '">' +
+        String(formatLegendValue(value)).trim() +
+      "</text>"
+    );
+  }
+
+  // Draw in order: max, mean, min
+  addCircleAndText("max", vMax, rMax, 0);
+  addCircleAndText("mean", vMean, rMean, 1);
+  addCircleAndText("min", vMin, rMin, 2);
+}
+
+
+// Load GeoJSON
 function getData() {
   fetch("data/US_Cities_Hot_Days.geojson")
-    .then(function(response) {
-      return response.json();
-    })
-    .then(function(json) {
-      // build the attributes array (years)
-      var attributes = processData(json);
+    .then(function (response) { return response.json(); })
+    .then(function (json) {
+      geoData = json;
 
-      if (attributes.length === 0) {
+      // Extract year fields like
+      attributesAll = processData(json);
+      if (attributesAll.length === 0) {
         alert("No year attributes found. Check GeoJSON field names.");
         return;
       }
 
-      // set starting attribute to first year
-      currentAttribute = attributes[0];
 
-      // compute min for Flannery scaling across all years
-      minValue = calculateMinValueAll(json, attributes);
+      // Set initial attribute to first year
+      currentAttribute = attributesAll[0];
 
-      // create symbols for starting year
+      // Compute global min across all years for stable scaling
+      globalMinValue = calcGlobalMinValue(json, attributesAll);
+
+      // Compute legend stats for initial year
+      dataStats = calcStatsForAttribute(json, currentAttribute);
+
+      // Build layers and UI
       createPropSymbols(json);
+      createSequenceControls(attributesAll);
+      createLegend(currentAttribute);
 
-      // create slider + buttons
-      createSequenceControls(attributes);
+      // Force initial sync
+      updatePropSymbols(currentAttribute);
     })
-    .catch(function(err) {
+    .catch(function (err) {
       console.error(err);
       alert("Could not load GeoJSON. Check console + file path.");
     });
 }
 
 
-// Run createMap()
+// Start once HTML is loaded
 document.addEventListener("DOMContentLoaded", createMap);
