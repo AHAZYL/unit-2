@@ -129,6 +129,7 @@ function formatLegendValue(v) {
 
 // Convert each point feature into a styled circleMarker
 function pointToLayer(feature, latlng) {
+
   // visual style for circles
   var options = {
     fillColor: "#ff6b6b",
@@ -173,8 +174,6 @@ function createPropSymbols(data) {
 
 
 
-
-
 // Update symbols by year
 function updatePropSymbols(attribute) {
   currentAttribute = attribute;
@@ -213,6 +212,7 @@ function updatePropSymbols(attribute) {
       layer.getPopup().options.keepInView = true;
       layer.getPopup().options.autoPanPaddingTopLeft = new L.Point(20, 20);
       layer.getPopup().options.autoPanPaddingBottomRight = new L.Point(380, 240);
+
 
       // If popup is open, refresh it so user sees new content immediately
       if (layer.isPopupOpen()) layer.openPopup();
