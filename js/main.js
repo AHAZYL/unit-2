@@ -25,10 +25,17 @@ function PopupContent(properties, attribute) {
 
 // Define createMap() to create the Leaflet map
 function createMap() {
-  // Create map centered over the US
+  // Create map centered over the US and prevent endless drifting
   map = L.map("map", {
     center: [39, -98],
-    zoom: 4
+    zoom: 4,
+    minZoom: 3,
+    maxZoom: 7,
+    maxBounds: [
+      [15, -130],
+      [55, -60]
+    ],
+    maxBoundsViscosity: 1.0
   });
 
   // Add CARTO dark basemap tiles
@@ -282,8 +289,6 @@ function createSequenceControls(attributes) {
 
 
 
-
-
 // Add a Leaflet control and insert it into the DOM
 function createLegend(startAttribute) {
   var LegendControl = L.Control.extend({
@@ -312,6 +317,31 @@ function createLegend(startAttribute) {
   setTimeout(function () {
     updateLegendGraphics();
   }, 0);
+}
+
+
+// Add a small narrative panel to explain why this map matters
+function createIntroPanel() {
+  var IntroControl = L.Control.extend({
+    options: { position: "topleft" },
+
+    onAdd: function () {
+      var container = L.DomUtil.create("div", "intro-control-container");
+
+      container.innerHTML =
+        '<h2>Extreme Heat in U.S. Cities</h2>' +
+        '<p>This map shows the number of hot days recorded in selected U.S. cities across multiple years.</p>' +
+        '<p>By comparing circle sizes over time, users can explore how heat exposure changes from city to city and year to year.</p>' +
+        '<p>This matters because increasing hot days can affect public health, urban livability, and climate resilience planning.</p>';
+
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+
+      return container;
+    }
+  });
+
+  map.addControl(new IntroControl());
 }
 
 
@@ -420,6 +450,7 @@ function getData() {
       createPropSymbols(json);
       createSequenceControls(attributesAll);
       createLegend(currentAttribute);
+      createIntroPanel();
 
       // Force initial sync
       updatePropSymbols(currentAttribute);
