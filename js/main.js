@@ -57,7 +57,6 @@ function processData(data) {
   var properties = data.features[0].properties;
 
   for (var propName in properties) {
-
     if (/^\d{4}$/.test(propName)) attributes.push(propName);
   }
 
@@ -139,7 +138,6 @@ function pointToLayer(feature, latlng) {
     fillOpacity: 0.5
   };
 
-
   // Set radius based on current year value
   var attValue = Number(feature.properties[currentAttribute]);
   options.radius = calcPropRadius(attValue);
@@ -152,7 +150,11 @@ function pointToLayer(feature, latlng) {
 
   // Bind popup and offset it
   layer.bindPopup(popupContent.formatted, {
-    offset: new L.Point(0, -options.radius)
+    offset: new L.Point(0, -options.radius),
+    autoPan: true,
+    keepInView: true,
+    autoPanPaddingTopLeft: new L.Point(20, 20),
+    autoPanPaddingBottomRight: new L.Point(380, 240)
   });
 
   return layer;
@@ -189,8 +191,6 @@ function updatePropSymbols(attribute) {
 
   if (!propSymbols) return;
 
-
-
   // Update each circle marker
   propSymbols.eachLayer(function (layer) {
     var props = layer.feature.properties;
@@ -208,13 +208,22 @@ function updatePropSymbols(attribute) {
 
     if (layer.getPopup()) {
       layer.setPopupContent(popupContent.formatted);
-      layer.getPopup().options.offset = new L.Point(0, -radius)
-
+      layer.getPopup().options.offset = new L.Point(0, -radius);
+      layer.getPopup().options.autoPan = true;
+      layer.getPopup().options.keepInView = true;
+      layer.getPopup().options.autoPanPaddingTopLeft = new L.Point(20, 20);
+      layer.getPopup().options.autoPanPaddingBottomRight = new L.Point(380, 240);
 
       // If popup is open, refresh it so user sees new content immediately
       if (layer.isPopupOpen()) layer.openPopup();
     } else {
-      layer.bindPopup(popupContent.formatted, { offset: new L.Point(0, -radius) });
+      layer.bindPopup(popupContent.formatted, {
+        offset: new L.Point(0, -radius),
+        autoPan: true,
+        keepInView: true,
+        autoPanPaddingTopLeft: new L.Point(20, 20),
+        autoPanPaddingBottomRight: new L.Point(380, 240)
+      });
     }
   });
 }
@@ -323,16 +332,17 @@ function createLegend(startAttribute) {
 // Add a small narrative panel to explain why this map matters
 function createIntroPanel() {
   var IntroControl = L.Control.extend({
-    options: { position: "topleft" },
+    options: { position: "topright" },
 
     onAdd: function () {
       var container = L.DomUtil.create("div", "intro-control-container");
 
       container.innerHTML =
-        '<h2>Extreme Heat in U.S. Cities</h2>' +
-        '<p>This map shows the number of hot days recorded in selected U.S. cities across multiple years.</p>' +
-        '<p>By comparing circle sizes over time, users can explore how heat exposure changes from city to city and year to year.</p>' +
-        '<p>This matters because increasing hot days can affect public health, urban livability, and climate resilience planning.</p>';
+        '<button id="intro-close">✕</button>' +
+        '<h2>Changing Heat Risk Across U.S. Cities</h2>' +
+        '<p>This map shows how the number of hot days varies across major U.S. cities over time.</p>' +
+        '<p>Users can compare patterns between regions, such as consistently higher values in southern cities and lower values in northern ones.</p>' +
+        '<p>These differences may reflect climate zones, urban heat effects, and broader climate change trends.</p>';
 
       L.DomEvent.disableClickPropagation(container);
       L.DomEvent.disableScrollPropagation(container);
@@ -342,6 +352,18 @@ function createIntroPanel() {
   });
 
   map.addControl(new IntroControl());
+
+  // Add close-button behavior after the control exists
+  setTimeout(function () {
+    var btn = document.getElementById("intro-close");
+    var panel = document.querySelector(".intro-control-container");
+
+    if (btn && panel) {
+      btn.onclick = function () {
+        panel.style.display = "none";
+      };
+    }
+  }, 0);
 }
 
 
